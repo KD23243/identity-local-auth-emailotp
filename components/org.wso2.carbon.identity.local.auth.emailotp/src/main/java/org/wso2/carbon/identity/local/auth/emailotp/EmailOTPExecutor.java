@@ -20,20 +20,29 @@ package org.wso2.carbon.identity.local.auth.emailotp;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.apache.commons.lang.StringUtils;
+import org.wso2.carbon.identity.application.authentication.framework.internal.FrameworkServiceDataHolder;
 import org.wso2.carbon.identity.central.log.mgt.utils.LogConstants;
 import org.wso2.carbon.identity.central.log.mgt.utils.LoggerUtils;
+import org.wso2.carbon.identity.core.util.IdentityTenantUtil;
 import org.wso2.carbon.identity.event.IdentityEventConstants;
 import org.wso2.carbon.identity.event.IdentityEventException;
 import org.wso2.carbon.identity.local.auth.emailotp.constant.AuthenticatorConstants;
 import org.wso2.carbon.identity.local.auth.emailotp.constant.ExecutorConstants;
 import org.wso2.carbon.identity.local.auth.emailotp.exception.EmailOtpAuthenticatorServerException;
+import org.wso2.carbon.identity.local.auth.emailotp.internal.AuthenticatorDataHolder;
+import org.wso2.carbon.identity.multi.attribute.login.mgt.ResolvedUserResult;
 import org.wso2.carbon.identity.user.registration.engine.Constants;
 import org.wso2.carbon.identity.user.registration.engine.exception.RegistrationEngineException;
 import org.wso2.carbon.identity.user.registration.engine.exception.RegistrationEngineServerException;
 import org.wso2.carbon.identity.user.registration.engine.graph.Executor;
 import org.wso2.carbon.identity.user.registration.engine.model.ExecutorResponse;
 import org.wso2.carbon.identity.user.registration.engine.model.RegistrationContext;
+import org.wso2.carbon.user.api.UserRealm;
+import org.wso2.carbon.user.api.UserStoreException;
+import org.wso2.carbon.user.api.UserStoreManager;
+import org.wso2.carbon.user.core.common.User;
 import org.wso2.carbon.utils.DiagnosticLog;
+import org.wso2.carbon.utils.multitenancy.MultitenantUtils;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -302,12 +311,20 @@ public class EmailOTPExecutor implements Executor {
         String email;
         String template;
         String code;
+        String username = context.getRegisteringUser().getUsername();
+        int tenantId = IdentityTenantUtil.getTenantId(context.getTenantDomain());
 
         if (context.getProperty("flow") == "recovery") {
-            //Hardcoded for now, need to resolve email using the username in userstore.
-            email = "kumuditha@wso2.com";
             template = "passwordResetOTP";
             code = "confirmation-code";
+            try {
+                UserRealm userRealm = (AuthenticatorDataHolder.getRealmService()).getTenantUserRealm(tenantId);
+                UserStoreManager userStoreManager = userRealm.getUserStoreManager();
+                email = userStoreManager.getUserClaimValues(username, new String[]{EMAIL_ADDRESS_CLAIM}, null).get(EMAIL_ADDRESS_CLAIM);
+            } catch (UserStoreException e) {
+                throw handleAuthErrorScenario(Constants.ErrorMessages.ERROR_CODE_EXECUTOR_FAILURE, e,
+                        context, "Error occurred while retrieving email from user store.");
+            }
         } else if (context.getProperty("flow") == "registration") {
             email = String.valueOf(context.getRegisteringUser().getClaim(EMAIL_ADDRESS_CLAIM));
             template = ExecutorConstants.EMAIL_OTP_VERIFY_TEMPLATE;
@@ -320,7 +337,6 @@ public class EmailOTPExecutor implements Executor {
         try {
             Map<String, Object> contextProperties = executorResponse.getContextProperties();
             String tenantDomain = context.getTenantDomain();
-            String username = String.valueOf(context.getRegisteringUser().getUsername());
 
             // Generate OTP.
             String otp = generateOTP(tenantDomain);
